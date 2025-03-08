@@ -148,7 +148,8 @@ local function analyze_keys(keypresses, excluded_modes)
   local total = 0
 
   for _, kp in ipairs(keypresses) do
-    if not excluded_modes[kp.mode] and not should_ignore_key(kp.key) then
+    -- Always include Escape key regardless of mode
+    if (kp.key == "<Esc>" or not excluded_modes[kp.mode]) and not should_ignore_key(kp.key) then
       key_counts[kp.key] = (key_counts[kp.key] or 0) + 1
       total = total + 1
     end
@@ -252,6 +253,7 @@ function M.analyze()
   local key_lines = {}
   table.insert(key_lines, string.format('Key presses excluding [insert, command] modes (total: %d)', total_keys))
   table.insert(key_lines, 'Note: Terminal escape sequences and mouse events are filtered out')
+  table.insert(key_lines, 'Note: <Esc> key is always included regardless of mode')
   table.insert(key_lines, '│──────────────────│───────│───────────│')
   table.insert(key_lines, '│ KEY              │ COUNT │ SHARE (%) │')
   table.insert(key_lines, '│──────────────────│───────│───────────│')
