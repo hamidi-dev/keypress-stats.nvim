@@ -1,4 +1,5 @@
 -- init.lua in keypress_analyzer
+--
 
 local M = {}
 
@@ -6,8 +7,8 @@ local M = {}
 M.config = {
   data_file = vim.fn.stdpath('data') .. '/keypresses.log',
   excluded_modes = {
-    ['i'] = true,  -- Insert mode
-    ['c'] = true,  -- Command-line mode
+    ['i'] = true, -- Insert mode
+    ['c'] = true, -- Command-line mode
     -- Add other modes to exclude as needed
   },
   mode_map = {
@@ -24,8 +25,10 @@ M.config = {
     ['t'] = 'terminal',
     -- Add other modes as necessary
   },
-  max_sequence_length = 10,  -- Max length of sequences to consider for antipatterns
+  max_sequence_length = 10,   -- Max length of sequences to consider for antipatterns
   min_pattern_occurrence = 2, -- Minimum times a pattern must occur to be considered
+  auto_start = false,         -- Whether to start logging automatically on Neovim startup
+  use_floating_term = true,   -- Whether to use a floating terminal for analysis
 }
 
 -- Internal state
@@ -68,7 +71,6 @@ function M.start_logging()
   end
   M.state.logging = true
   vim.on_key(log_keypress)
-  vim.notify('Keypress logging started.')
 end
 
 -- Function to stop logging
@@ -154,12 +156,12 @@ local function analyze_antipatterns(keypresses, excluded_modes)
           local seq_key = current_sequence[1].key
           local seq_length = #current_sequence
           local pattern = seq_key:rep(seq_length)
-          sequences[pattern] = sequences[pattern] or {count = 0, total_keys = 0, occurrences = 0}
+          sequences[pattern] = sequences[pattern] or { count = 0, total_keys = 0, occurrences = 0 }
           sequences[pattern].count = sequences[pattern].count + 1
           sequences[pattern].total_keys = sequences[pattern].total_keys + seq_length
           sequences[pattern].occurrences = sequences[pattern].occurrences + 1
         end
-        current_sequence = {kp}
+        current_sequence = { kp }
       end
     else
       -- Reset sequence if mode is excluded
@@ -173,7 +175,7 @@ local function analyze_antipatterns(keypresses, excluded_modes)
     local seq_key = current_sequence[1].key
     local seq_length = #current_sequence
     local pattern = seq_key:rep(seq_length)
-    sequences[pattern] = sequences[pattern] or {count = 0, total_keys = 0, occurrences = 0}
+    sequences[pattern] = sequences[pattern] or { count = 0, total_keys = 0, occurrences = 0 }
     sequences[pattern].count = sequences[pattern].count + 1
     sequences[pattern].total_keys = sequences[pattern].total_keys + seq_length
     sequences[pattern].occurrences = sequences[pattern].occurrences + 1
@@ -203,7 +205,7 @@ function M.analyze()
   -- Convert mode_counts to a sorted list
   local mode_list = {}
   for mode, count in pairs(mode_counts) do
-    table.insert(mode_list, {mode = mode, count = count})
+    table.insert(mode_list, { mode = mode, count = count })
   end
   table.sort(mode_list, function(a, b)
     return a.count > b.count
@@ -228,7 +230,7 @@ function M.analyze()
   -- Convert key_counts to a sorted list
   local key_list = {}
   for key, count in pairs(key_counts) do
-    table.insert(key_list, {key = key, count = count})
+    table.insert(key_list, { key = key, count = count })
   end
   table.sort(key_list, function(a, b)
     return a.count > b.count
@@ -273,7 +275,8 @@ function M.analyze()
   -- Display top 10 antipatterns
   for i = 1, math.min(10, #pattern_list) do
     local item = pattern_list[i]
-    table.insert(pattern_lines, string.format('│ %-13s │ %5d │ %17d │ %23.2f │', item.pattern, item.count, item.total_keys, item.avg_keys))
+    table.insert(pattern_lines,
+      string.format('│ %-13s │ %5d │ %17d │ %23.2f │', item.pattern, item.count, item.total_keys, item.avg_keys))
   end
   table.insert(pattern_lines, '│───────────────│───────│───────────────────│─────────────────────────│')
 
@@ -283,16 +286,50 @@ function M.analyze()
   vim.list_extend(all_lines, key_lines)
   vim.list_extend(all_lines, pattern_lines)
 
-  -- Display in a new buffer
-  vim.cmd('tabnew')
-  local buf = vim.api.nvim_get_current_buf()
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, all_lines)
-  vim.bo[buf].filetype = 'plaintext'
-  vim.bo[buf].buftype = 'nofile'
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.bo[buf].swapfile = false
-  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
-  vim.api.nvim_buf_set_option(buf, 'readonly', true)
+  -- Create a temporary file to store the analysis
+  local temp_file = vim.fn.tempname()
+  local f = io.open(temp_file, 'w')
+  if f then
+    for _, line in ipairs(all_lines) do
+      f:write(line .. '\n')
+    end
+    f:close()
+
+    -- Check if snacks is available
+    local has_snacks, snacks = pcall(require, "snacks")
+
+    if has_snacks then
+      -- Use snacks terminal to display the analysis
+      snacks.terminal.open("cat " .. temp_file .. " | less -R",
+        { win = { position = "float", width = 0.70, height = 0.95 } })
+    else
+      -- Fallback to a regular floating window if snacks is not available
+      local cmd = "less -R " .. temp_file
+      vim.fn.termopen(cmd)
+
+      -- Create a floating window
+      local width = math.min(120, vim.o.columns - 10)
+      local height = math.min(30, vim.o.lines - 10)
+      local row = math.floor((vim.o.lines - height) / 2)
+      local col = math.floor((vim.o.columns - width) / 2)
+
+      local buf = vim.api.nvim_create_buf(false, true)
+      local win = vim.api.nvim_open_win(buf, true, {
+        relative = 'editor',
+        width = width,
+        height = height,
+        row = row,
+        col = col,
+        style = 'minimal',
+        border = 'rounded'
+      })
+
+      vim.fn.termopen(cmd)
+      vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
+    end
+  else
+    vim.api.nvim_err_writeln('Error creating temporary file for analysis.')
+  end
 end
 
 -- Function to clear keypress data
@@ -306,9 +343,22 @@ function M.clear_data()
   end
 end
 
+-- Function to initialize auto-start
+local function init_auto_start()
+  if M.config.auto_start then
+    -- Use a small delay to ensure Neovim is fully initialized
+    vim.defer_fn(function()
+      M.start_logging()
+    end, 100)
+  end
+end
+
 -- Setup function (optional if you need to override defaults)
 function M.setup(config)
   M.config = vim.tbl_deep_extend('force', M.config, config or {})
+
+  -- Initialize auto-start if enabled
+  init_auto_start()
 end
 
 -- Create user commands
