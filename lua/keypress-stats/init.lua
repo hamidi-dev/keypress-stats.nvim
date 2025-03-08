@@ -36,15 +36,18 @@ M.state = {
   logging = false,
 }
 
--- Function to check if a key is a mouse event
-local function is_mouse_event(key)
+-- Function to check if a key is a mouse event or terminal escape sequence
+local function should_ignore_key(key)
   -- Mouse events in Vim/Neovim typically start with "<LeftMouse", "<RightMouse", etc.
   -- Also check for drag events like "<LeftDrag>", release events like "<LeftRelease>",
   -- and scroll wheel events like "<ScrollWheelDown>"
+  -- Terminal escape sequences typically contain "<t_" or "<FD>"
   return key:match("^<.*Mouse") ~= nil or 
          key:match("^<.*Drag>") ~= nil or 
          key:match("^<.*Release>") ~= nil or
-         key:match("^<ScrollWheel") ~= nil
+         key:match("^<ScrollWheel") ~= nil or
+         key:match("<t_") ~= nil or
+         key:match("<FD>") ~= nil
 end
 
 -- Function to log keypresses
@@ -52,8 +55,8 @@ local function log_keypress(char)
   -- Represent the key as a readable string
   local key = vim.fn.keytrans(char)
   
-  -- Skip mouse events
-  if is_mouse_event(key) then
+  -- Skip mouse events and terminal escape sequences
+  if should_ignore_key(key) then
     return
   end
 
@@ -129,8 +132,8 @@ local function analyze_modes(keypresses)
   local total = 0
 
   for _, kp in ipairs(keypresses) do
-    -- Skip mouse events
-    if not is_mouse_event(kp.key) then
+    -- Skip mouse events and terminal escape sequences
+    if not should_ignore_key(kp.key) then
       mode_counts[kp.mode] = (mode_counts[kp.mode] or 0) + 1
       total = total + 1
     end
@@ -145,7 +148,7 @@ local function analyze_keys(keypresses, excluded_modes)
   local total = 0
 
   for _, kp in ipairs(keypresses) do
-    if not excluded_modes[kp.mode] then
+    if not excluded_modes[kp.mode] and not should_ignore_key(kp.key) then
       key_counts[kp.key] = (key_counts[kp.key] or 0) + 1
       total = total + 1
     end
@@ -159,15 +162,20 @@ local function analyze_antipatterns(keypresses, excluded_modes)
   local sequences = {}
   local current_sequence = {}
   local last_mode = ''
+  local last_timestamp = 0
+  local time_threshold = 1.5  -- 1.5 seconds threshold for considering keys part of the same sequence
 
   for _, kp in ipairs(keypresses) do
     local key = kp.key
     local mode = kp.mode
+    local timestamp = kp.timestamp
 
-    -- Only consider modes that are not excluded and not mouse events
-    if not excluded_modes[mode] and not is_mouse_event(key) then
-      -- If the key is the same as the last one, accumulate it
-      if #current_sequence == 0 or key == current_sequence[#current_sequence].key then
+    -- Only consider modes that are not excluded and not mouse events or terminal escape sequences
+    if not excluded_modes[mode] and not should_ignore_key(key) then
+      -- If the key is the same as the last one and within time threshold, accumulate it
+      local time_diff = (last_timestamp > 0) and (timestamp - last_timestamp) or 0
+      if #current_sequence == 0 or 
+         (key == current_sequence[#current_sequence].key and time_diff <= time_threshold) then
         table.insert(current_sequence, kp)
       else
         -- Process the sequence
@@ -182,6 +190,7 @@ local function analyze_antipatterns(keypresses, excluded_modes)
         end
         current_sequence = { kp }
       end
+      last_timestamp = timestamp
     else
       -- Reset sequence if mode is excluded or it's a mouse event
       current_sequence = {}
@@ -242,7 +251,7 @@ function M.analyze()
 -- Prepare key frequencies lines
   local key_lines = {}
   table.insert(key_lines, string.format('Key presses excluding [insert, command] modes (total: %d)', total_keys))
-  table.insert(key_lines, 'Note: Keys like <t_FD> represent terminal escape sequences or special key codes')
+  table.insert(key_lines, 'Note: Terminal escape sequences and mouse events are filtered out')
   table.insert(key_lines, '│──────────────────│───────│───────────│')
   table.insert(key_lines, '│ KEY              │ COUNT │ SHARE (%) │')
   table.insert(key_lines, '│──────────────────│───────│───────────│')
@@ -267,9 +276,9 @@ function M.analyze()
   -- Analyze antipatterns
   local patterns = analyze_antipatterns(keypresses, M.config.excluded_modes)
 
-  -- Prepare antipatterns lines
+-- Prepare antipatterns lines
   local pattern_lines = {}
-  table.insert(pattern_lines, 'Found Antipatterns')
+  table.insert(pattern_lines, 'Found Antipatterns (repeated keypresses within 1.5 seconds)')
   table.insert(pattern_lines, '│───────────────│───────│───────────────────│─────────────────────────│')
   table.insert(pattern_lines, '│ PATTERN       │ COUNT │ TOTAL KEY PRESSES │ AVG KEYS PER OCCURRENCE │')
   table.insert(pattern_lines, '│───────────────│───────│───────────────────│─────────────────────────│')
