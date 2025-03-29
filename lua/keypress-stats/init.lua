@@ -1,4 +1,5 @@
 -- init.lua in keypress_analyzer
+-- BUG: escape key is logged but not included in the analysis
 
 
 local M = {}
@@ -50,6 +51,20 @@ local function should_ignore_key(key)
          key:match("<FD>") ~= nil
 end
 
+-- Function to ensure directory exists
+local function ensure_directory_exists(file_path)
+  local dir = vim.fn.fnamemodify(file_path, ':h')
+  if vim.fn.isdirectory(dir) == 0 then
+    local success = vim.fn.mkdir(dir, 'p')
+    if success == 0 then
+      vim.api.nvim_err_writeln('Failed to create directory: ' .. dir)
+      return false
+    end
+    return true
+  end
+  return true  -- Directory already exists
+end
+
 -- Function to log keypresses
 local function log_keypress(char)
   -- Represent the key as a readable string
@@ -72,13 +87,20 @@ local function log_keypress(char)
   -- Prepare the data line
   local data_line = string.format('%d,%s,%s\n', timestamp, mode_name, key)
 
+  -- Ensure the directory exists
+  ensure_directory_exists(M.config.data_file)
+
   -- Append the data to the file
-  local f = io.open(M.config.data_file, 'a')
-  if f then
-    f:write(data_line)
-    f:close()
+  if ensure_directory_exists(M.config.data_file) then
+    local f = io.open(M.config.data_file, 'a')
+    if f then
+      f:write(data_line)
+      f:close()
+    else
+      vim.api.nvim_err_writeln('Error opening keypress data file for writing: ' .. M.config.data_file)
+    end
   else
-    vim.api.nvim_err_writeln('Error opening keypress data file for writing.')
+    vim.api.nvim_err_writeln('Failed to create directory for keypress data file: ' .. vim.fn.fnamemodify(M.config.data_file, ':h'))
   end
 end
 
@@ -106,9 +128,16 @@ end
 -- Function to read logged data
 local function read_data()
   local keypresses = {}
+  
+  -- Ensure the directory exists
+  if not ensure_directory_exists(M.config.data_file) then
+    vim.api.nvim_err_writeln('Failed to create directory for keypress data file: ' .. vim.fn.fnamemodify(M.config.data_file, ':h'))
+    return keypresses
+  end
+  
   local f = io.open(M.config.data_file, 'r')
   if not f then
-    vim.api.nvim_err_writeln('Error opening keypress data file for reading.')
+    vim.api.nvim_err_writeln('Error opening keypress data file for reading: ' .. M.config.data_file)
     return keypresses
   end
 
@@ -365,12 +394,18 @@ end
 
 -- Function to clear keypress data
 function M.clear_data()
+  -- Ensure the directory exists
+  if not ensure_directory_exists(M.config.data_file) then
+    vim.api.nvim_err_writeln('Failed to create directory for keypress data file: ' .. vim.fn.fnamemodify(M.config.data_file, ':h'))
+    return
+  end
+  
   local f = io.open(M.config.data_file, 'w')
   if f then
     f:close()
     vim.notify('Keypress data cleared.')
   else
-    vim.api.nvim_err_writeln('Error clearing keypress data file.')
+    vim.api.nvim_err_writeln('Error clearing keypress data file: ' .. M.config.data_file)
   end
 end
 
